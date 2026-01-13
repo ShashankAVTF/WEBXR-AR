@@ -23,12 +23,11 @@ const boxHelper = new THREE.Box3();
 let lastValidPosition = new THREE.Vector3();
 let lastValidRotation = new THREE.Euler();
 
-// --- 1. SETUP URL PARAMS ---
-// Example: mysite.com/?model=POT1
+// ---SETUP URL PARAMS ---
 const urlParams = new URLSearchParams(window.location.search);
 const modelName = urlParams.get('model') || 'recliner1'; // Default if empty
 
-// --- 2. TEXTURE LOADER ---
+// ---TEXTURE LOADER ---
 const textureLoader = new THREE.TextureLoader();
 const WALL_TEXTURES = [
     textureLoader.load('./textures/wall1.jpg'),
@@ -122,6 +121,9 @@ function init() {
     window.addEventListener('updateWall', (e) => applyWallTexture(e.detail));
     window.addEventListener('updateFloor', (e) => applyFloorTexture(e.detail));
     window.addEventListener('setGizmoMode', (e) => setGizmoMode(e.detail));
+
+    //Camera
+    window.addEventListener('updateCamera', (e)=> animateCamera(e.detail));
 }
 
 function loadCustomRoom() {
@@ -227,6 +229,38 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animateCamera(viewName) {
+    let targetPos = new THREE.Vector3();
+
+    switch(viewName) {
+        case 'front': 
+            targetPos.set(0, 2, 8);
+            break;
+        case 'left':  
+            targetPos.set(-7, 2, 0);
+            break;
+        case 'right': 
+            targetPos.set(7, 2, 0);
+            break;
+        case 'top':   
+            targetPos.set(0, 9, 0.1);
+            break;
+        case 'free':  
+            controls.enabled = true; // Unlock controls
+            return; // Don't move camera, just let user orbit
+    }
+
+    //Move Camera
+    camera.position.copy(targetPos);
+    
+    //Reset Focus
+    camera.lookAt(0, 0, 0);
+    controls.target.set(0, 0, 0);
+    
+    // Update Controls so they don't fight the new position
+    controls.update();
 }
 
 function animate() {
