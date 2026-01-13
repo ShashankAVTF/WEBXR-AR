@@ -58,12 +58,10 @@ function init() {
     
     if (isIOS) {
         setupIOSFallback(); // Call the Apple logic
-        alert("ios")
     } else {
         // Setup Android/WebXR logic
         setupWebXR();
         console.log("webXr")
-        alert("webxr")
     }
 
     window.addEventListener('resize', onWindowResize);
@@ -125,7 +123,7 @@ function setupIOSFallback() {
     button.style.textDecoration = 'none';
     button.style.boxShadow = '0px 4px 10px rgba(0,0,0,0.3)';
     
-    // Add an icon (optional unicode cube)
+    // Add an icon
     button.textContent = "📦 View in AR"; 
     
     // Only show the button if the file actually looks like an AR file

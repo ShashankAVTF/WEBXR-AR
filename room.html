@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Room</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <style>
+        body { margin: 0; background-color: #1a1a1a; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        
+        /* 1. Camera Controls (Right Side) */
+        #camera-ui {
+            position: absolute;
+            top: 50%;
+            right: 20px;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* 2. Theming Controls (Bottom) */
+        #theme-ui {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 40px;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 15px;
+            color: white;
+        }
+
+        .section { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .btn-group { display: flex; gap: 10px; }
+        
+        button {
+            background: #444;
+            color: white;
+            border: 1px solid #666;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%; /* Circles for colors */
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:hover { transform: scale(1.1); }
+        
+        /* Camera buttons are rectangles */
+        .cam-btn {
+            border-radius: 8px;
+            width: auto;
+            padding: 10px 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        /* Color Previews */
+        .wall-1 { background: #E0E0E0; } 
+        .wall-2 { background: #1c1842; }
+        .wall-3 { background: #551818; }
+        
+        .floor-1 { background: #D7CCC8; }
+        .floor-2 { background: #5D4037; }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="camera-ui">
+        <button class="cam-btn" onclick="setCameraView('front')">FRONT</button>
+        <button class="cam-btn" onclick="setCameraView('left')">LEFT</button>
+        <button class="cam-btn" onclick="setCameraView('right')">RIGHT</button>
+        <button class="cam-btn" onclick="setCameraView('top')">TOP</button>
+        <button class="cam-btn" onclick="setCameraView('free')">FREE LOOK</button>
+    </div>
+
+    <div id="theme-ui">
+        <div class="section">
+            <span style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Wall Color</span>
+            <div class="btn-group">
+                <button class="wall-1" onclick="changeWall(0)"></button>
+                <button class="wall-2" onclick="changeWall(1)"></button>
+                <button class="wall-3" onclick="changeWall(2)"></button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <span style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Floor Material</span>
+            <div class="btn-group">
+                <button class="floor-1" onclick="changeFloor(0)"></button>
+                <button class="floor-2" onclick="changeFloor(1)"></button>
+            </div>
+        </div>
+    </div>
+
+    <div style="
+    position: absolute; 
+    top: 20px; 
+    left: 50%; 
+    transform: translateX(-50%); 
+    display: flex; 
+    gap: 10px;">
+    <button onclick="setMode('translate')">MOVE</button>
+    <button onclick="setMode('rotate')">ROTATE</button>
+</div>
+
+
+    <script type="module" src="./room.js"></script>
+
+    <script>
+        // These send signals to the 3D engine
+        window.changeWall = (index) => window.dispatchEvent(new CustomEvent('updateWall', { detail: index }));
+        window.changeFloor = (index) => window.dispatchEvent(new CustomEvent('updateFloor', { detail: index }));
+        window.setCameraView = (view) => window.dispatchEvent(new CustomEvent('updateCamera', { detail: view }));
+        window.setMode = (mode) => window.dispatchEvent(new CustomEvent('setGizmoMode', { detail: mode }));
+    </script>
+</body>
+</html>
