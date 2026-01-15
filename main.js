@@ -1,27 +1,45 @@
 import * as THREE from 'three';
-import { ARButton } from 'three/addons/webxr/ARButton.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import {
+    ARButton
+} from 'three/addons/webxr/ARButton.js';
+import {
+    GLTFLoader
+} from 'three/addons/loaders/GLTFLoader.js';
 
 // --- GLOBAL VARIABLES ---
 let container;
 let camera, scene, renderer;
 let controller;
 let reticle;
+
+// WebXR Hit Sources
 let hitTestSource = null;
 let hitTestSourceRequested = false;
+let transientHitTestSource = null; // For Dragging
 
 // Model & Logic
 let currentModel = null;
 let loadedGLTF = null;
-let isDragging = false;
-let previousX = 0;
 
-// Reuse this vector to prevent memory crashes
+// Reuse this vector to prevent memory crashes during math
 const workingVec = new THREE.Vector3();
 
 // Get Model Name from URL
 const urlParams = new URLSearchParams(window.location.search);
 const modelName = urlParams.get('model') || 'POT1';
+
+// --- GESTURE VARIABLES ---
+let isDragging = false;
+let isTwoFinger = false;
+
+// For Scaling (Pinch)
+let initialDistance = 0;
+let initialScale = new THREE.Vector3();
+
+// For Rotation (Twist)
+let initialAngle = 0;
+let initialModelRotation = 0;
+
 
 init();
 animate();
@@ -34,34 +52,54 @@ function init() {
     camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
     // --- LIGHTING ---
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2);
-    dirLight.position.set(5, 10, 7);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 3);
+    dirLight.position.set(1, 10, 1);
+    dirLight.castShadow = true;
+
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+
+    // SHADOW BOX SIZE (Crucial for visibility)
+    const d = 10;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 50;
+    dirLight.shadow.bias = -0.0005;
+    dirLight.shadow.blurSamples= 25; //high means smooth
+    dirLight.shadow.radius = 1; //high means smooth
+
     scene.add(dirLight);
 
     // --- RENDERER ---
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true
+    });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    
-    // Prevent scrolling on the canvas
-    renderer.domElement.style.touchAction = 'none'; 
+
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.VSMShadowMap;
+
+    renderer.domElement.style.touchAction = 'none';
     container.appendChild(renderer.domElement);
 
     // --- PLATFORM CHECK ---
-    // If iOS, we skip WebXR setup and show the .usdz button instead
     const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream;
-    
+
     if (isIOS) {
-        setupIOSFallback(); // Call the Apple logic
+        setupIOSFallback();
     } else {
-        // Setup Android/WebXR logic
         setupWebXR();
-        console.log("webXr")
     }
 
     window.addEventListener('resize', onWindowResize);
@@ -69,22 +107,49 @@ function init() {
 
 // --- ANDROID / WEBXR SETUP ---
 function setupWebXR() {
-    // 1. Add "Start AR" Button
-    document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
+    document.body.appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: {
+            root: document.body
+        }
+    }));
 
-    // 2. Load the .GLB Model dynamically
+    // Load Model
     const loader = new GLTFLoader();
     const glbPath = `./models/${modelName}.glb`;
-    
+
     loader.load(glbPath, function (gltf) {
         loadedGLTF = gltf.scene;
+
+        // Shadow Setup
+        loadedGLTF.traverse((child) => {
+            if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = false;
+            }
+        });
+
+        // Shadow Plane
+        const shadowGeo = new THREE.PlaneGeometry(10, 10);
+        const shadowMat = new THREE.ShadowMaterial({
+            opacity: 0.1,
+            color: 0x000000
+        });
+
+        const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+        shadowMesh.rotation.x = -Math.PI / 2;
+        shadowMesh.receiveShadow = true;
+        shadowMesh.position.y = 0.0; // Tiny offset
+
+        loadedGLTF.add(shadowMesh);
+
         console.log(`Loaded: ${glbPath}`);
-    }, undefined, function(error) {
+    }, undefined, function (error) {
         console.error("Error loading GLB:", error);
-        alert(`Could not load ${glbPath}. Check file name.`);
     });
 
-    // 3. Setup Reticle
+    // Reticle
     reticle = new THREE.Mesh(
         new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
         new THREE.MeshBasicMaterial()
@@ -93,7 +158,7 @@ function setupWebXR() {
     reticle.visible = false;
     scene.add(reticle);
 
-    // 4. Setup Input
+    // Controller
     controller = renderer.xr.getController(0);
     controller.addEventListener('select', onSelect);
     scene.add(controller);
@@ -101,53 +166,37 @@ function setupWebXR() {
     initTouchControls();
 }
 
-// --- IOS / AR QUICK LOOK SETUP ---
+// --- IOS SETUP ---
 function setupIOSFallback() {
-    // Create a styled button for iOS users
     const button = document.createElement('a');
-    button.href = `./models/${modelName}.usdz`; // Link to the .usdz file
-    button.rel = "ar"; // Trigger AR Quick Look
-    
-    // Button Styling
-    button.style.position = 'absolute';
-    button.style.bottom = '50px';
-    button.style.left = '50%';
-    button.style.transform = 'translateX(-50%)';
-    button.style.padding = '15px 30px';
-    button.style.backgroundColor = 'white';
-    button.style.color = 'black';
-    button.style.border = 'none';
-    button.style.borderRadius = '30px';
-    button.style.fontFamily = 'sans-serif';
-    button.style.fontWeight = 'bold';
-    button.style.textDecoration = 'none';
-    button.style.boxShadow = '0px 4px 10px rgba(0,0,0,0.3)';
-    
-    // Add an icon
-    button.textContent = "📦 View in AR"; 
-    
-    // Only show the button if the file actually looks like an AR file
-    const img = document.createElement('img');
-    // You can add a preview image here if you want
-    
+    button.href = `./models/${modelName}.usdz`;
+    button.rel = "ar";
+
+    Object.assign(button.style, {
+        position: 'absolute',
+        bottom: '50px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        padding: '15px 30px',
+        backgroundColor: 'white',
+        color: 'black',
+        border: 'none',
+        borderRadius: '30px',
+        fontFamily: 'sans-serif',
+        fontWeight: 'bold',
+        textDecoration: 'none',
+        boxShadow: '0px 4px 10px rgba(0,0,0,0.3)'
+    });
+    button.textContent = "📦 View in AR";
     document.body.appendChild(button);
-    
-    // Add a helper text
-    const msg = document.createElement('div');
-    msg.textContent = "iOS detected: Using Apple Quick Look";
-    msg.style.position = 'absolute';
-    msg.style.top = '20px';
-    msg.style.width = '100%';
-    msg.style.textAlign = 'center';
-    msg.style.color = '#888';
-    document.body.appendChild(msg);
 }
 
-// --- INTERACTION LOGIC (WEBXR ONLY) ---
+// --- INTERACTION LOGIC ---
 
 function onSelect() {
-    if (isDragging) return; 
+    if (isDragging) return;
 
+    // Only allow placement if the reticle is actually visible
     if (reticle.visible && loadedGLTF) {
         if (currentModel) {
             currentModel.position.setFromMatrixPosition(reticle.matrix);
@@ -159,36 +208,72 @@ function onSelect() {
     }
 }
 
+// --- NEW HELPER FUNCTION: RETICLE DISTANCE CHECK ---
 function shouldShowReticle(reticleMatrix) {
+    // If no model exists yet, always show reticle
     if (!currentModel) return true;
-    
-    // optimized vector (no memory leak)
+
+    // Calculate distance between Reticle and Model
     workingVec.setFromMatrixPosition(reticleMatrix);
     const distance = workingVec.distanceTo(currentModel.position);
-    
-    return distance > 0.5; // Hide if within 0.5m
+
+    // If distance is less than 0.6 meters (60cm), hide reticle
+    return distance > 0.6;
 }
 
+// --- GESTURES ---
 function initTouchControls() {
     window.addEventListener('touchstart', (e) => {
-        isDragging = true;
-        previousX = e.touches[0].clientX;
-    }, { passive: false });
+        if (!currentModel) return;
+
+        if (e.touches.length === 1) {
+            isDragging = true;
+            isTwoFinger = false;
+        } else if (e.touches.length === 2) {
+            isDragging = false;
+            isTwoFinger = true;
+
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+
+            initialDistance = Math.sqrt(dx * dx + dy * dy);
+            initialScale.copy(currentModel.scale);
+
+            initialAngle = Math.atan2(dy, dx);
+            initialModelRotation = currentModel.rotation.y;
+        }
+    }, {
+        passive: false
+    });
 
     window.addEventListener('touchmove', (e) => {
-        // Prevent browser scrolling
-        e.preventDefault(); 
-        
-        if (isDragging && currentModel) {
-            const currentX = e.touches[0].clientX;
-            const deltaX = currentX - previousX;
-            currentModel.rotation.y += deltaX * 0.01;
-            previousX = currentX;
+        e.preventDefault();
+        if (!currentModel) return;
+
+        if (e.touches.length === 2 && isTwoFinger) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+
+            // Scale
+            const currentDistance = Math.sqrt(dx * dx + dy * dy);
+            const scaleFactor = currentDistance / initialDistance;
+            const newScale = Math.max(0.1, Math.min(initialScale.x * scaleFactor, 5.0));
+            currentModel.scale.set(newScale, newScale, newScale);
+
+            // Rotate
+            const currentAngle = Math.atan2(dy, dx);
+            const angleDiff = currentAngle - initialAngle;
+            currentModel.rotation.y = initialModelRotation - angleDiff;
         }
-    }, { passive: false });
+    }, {
+        passive: false
+    });
 
     window.addEventListener('touchend', () => {
-        setTimeout(() => { isDragging = false; }, 100);
+        setTimeout(() => {
+            isDragging = false;
+            isTwoFinger = false;
+        }, 100);
     });
 }
 
@@ -202,42 +287,64 @@ function animate() {
     renderer.setAnimationLoop(render);
 }
 
+// --- RENDER LOOP ---
 function render(timestamp, frame) {
-    // Only run WebXR logic if we are actually in a session
     if (frame && renderer.xr.isPresenting) {
         const referenceSpace = renderer.xr.getReferenceSpace();
         const session = renderer.xr.getSession();
 
         if (hitTestSourceRequested === false) {
-            session.requestReferenceSpace('viewer').then((referenceSpace) => {
-                session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+            session.requestReferenceSpace('viewer').then((refSpace) => {
+                session.requestHitTestSource({
+                    space: refSpace
+                }).then((source) => {
                     hitTestSource = source;
+                });
+                session.requestHitTestSourceForTransientInput({
+                    profile: 'generic-touchscreen'
+                }).then((source) => {
+                    transientHitTestSource = source;
                 });
             });
             session.addEventListener('end', () => {
                 hitTestSourceRequested = false;
                 hitTestSource = null;
+                transientHitTestSource = null;
             });
             hitTestSourceRequested = true;
         }
 
+        // --- RETICLE LOGIC ---
         if (hitTestSource) {
             const hitTestResults = frame.getHitTestResults(hitTestSource);
             if (hitTestResults.length > 0) {
                 const hit = hitTestResults[0];
-                const hitPose = hit.getPose(referenceSpace);
 
-                // Update Matrix FIRST
-                reticle.matrix.fromArray(hitPose.transform.matrix);
+                // Update Reticle Position First
+                reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
 
-                // Then check logic
+                // CHECK DISTANCE: Only show if far enough away from model
                 if (shouldShowReticle(reticle.matrix)) {
                     reticle.visible = true;
                 } else {
                     reticle.visible = false;
                 }
+
             } else {
                 reticle.visible = false;
+            }
+        }
+
+        // --- DRAG LOGIC ---
+        if (transientHitTestSource && isDragging && !isTwoFinger && currentModel) {
+            const hitTestResults = frame.getHitTestResultsForTransientInput(transientHitTestSource);
+            if (hitTestResults.length > 0 && hitTestResults[0].results.length > 0) {
+                const hit = hitTestResults[0].results[0];
+                const hitPose = hit.getPose(referenceSpace);
+
+                currentModel.position.setFromMatrixPosition(
+                    new THREE.Matrix4().fromArray(hitPose.transform.matrix)
+                );
             }
         }
     }
